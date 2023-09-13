@@ -14,7 +14,6 @@
 
 #include <sdbus-c++/IObject.h>
 #include <sdbus-c++/ProxyInterfaces.h>
-#include <systemd/sd-bus.h>
 
 #include "absl/strings/string_view.h"
 #include "internal/platform/bluetooth_utils.h"
