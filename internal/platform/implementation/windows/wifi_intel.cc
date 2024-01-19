@@ -28,15 +28,19 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <iostream>
 #include <string>
 #include <type_traits>
 
+#ifndef NO_INTEL_PIE
 #include "absl/strings/str_format.h"
+#include "third_party/intel/pie/include/PieApiErrors.h"
 #include "third_party/intel/pie/include/PieApiTypes.h"
 #include "third_party/intel/pie/include/PieDefinitions.h"
 #include "third_party/intel/pie/include/PieErrorMacro.h"
 #include "internal/platform/logging.h"
+#endif
 
 namespace nearby {
 namespace windows {
@@ -81,20 +85,26 @@ namespace {
     }                                                            \
   }
 
+#ifndef NO_INTEL_PIE
 #define PIE_API_DLL L"\\MurocApi.dll"
 #define ERROR_
 const wchar_t PIE_HW_ID_[] = L"SWC\\VID_8086&PID_PIE&SID_0001\0";
 const wchar_t PIE_DLL_PATH_HINT[] = L"PiePathHint";
+#endif
 }  // namespace
-
+#ifndef NO_INTEL_PIE
 typedef MUROC_RET(APIENTRY* WIFIGETADAPTERLIST)(  // NOLINT
     PINTEL_WIFI_HEADER pHeader, void** pAdapterList);
 typedef MUROC_RET(APIENTRY* REGISTERINTELCB)(
     MurocDefs::PINTEL_CALLBACK pIntelCallback);
 typedef MUROC_RET(APIENTRY* GETRADIOSTATE)(HADAPTER hAdapter, bool* bEnabled);
-typedef MUROC_RET(APIENTRY* WIFIPANQUERYPREFFEDCHANNELSETTING)(
+typedef MUROC_RET(APIENTRY* WIFIPANQUERYPREFERREDCHANNELSETTING)(
     HADAPTER hAdapter, PINTEL_WIFI_HEADER pHeader,
     void* pOutQueryPreferredChannel);
+typedef MUROC_RET(APIENTRY* WIFILEGACYGOSETSCANFILTER)(
+    HADAPTER hAdapter, PINTEL_WIFI_HEADER pHeader, void* pInputData);
+typedef MUROC_RET(APIENTRY* WIFIPANRESETLEGACYGOSCANFILTER)(
+    HADAPTER hAdapter, PINTEL_WIFI_HEADER pHeader);
 typedef MUROC_RET(APIENTRY* DEREGISTERINTELCB)(
     MurocDefs::INTEL_EVENT_CALLBACK fnCallbac);
 typedef MUROC_RET(APIENTRY* FREELISTMEMORY)(void* pList);
@@ -124,6 +134,7 @@ void WINAPI IntelEventHandler(MurocDefs::INTEL_EVENT iEvent,  // NOLINT
 // because the CB comes from another thread
 MurocDefs::INTEL_CALLBACK g_intel_event_cb_handle = {IntelEventHandler,
                                                      nullptr};
+#endif
 
 WifiIntel& WifiIntel::GetInstance() {
   static std::aligned_storage_t<sizeof(WifiIntel), alignof(WifiIntel)> storage;
@@ -131,8 +142,9 @@ WifiIntel& WifiIntel::GetInstance() {
   return *instance;
 }
 
-void WifiIntel::Start() {
+bool WifiIntel::Start() {
   NEARBY_LOGS(INFO) << "WifiIntel::Start()";
+#ifndef NO_INTEL_PIE
   muroc_api_dll_handle_ = PIEDllLoader();
   if ((muroc_api_dll_handle_ != nullptr)) {
     NEARBY_LOGS(INFO) << "Load PIE_API_DLL completed successfully";
@@ -146,10 +158,15 @@ void WifiIntel::Start() {
       SAFEFREELIBRARY(muroc_api_dll_handle_);
     }
   }
+#else
+  NEARBY_LOGS(INFO) << "NO_INTEL_PIE found, skip";
+#endif
+  return intel_wifi_valid_;
 }
 
 void WifiIntel::Stop() {
   NEARBY_LOGS(INFO) << "WifiIntel::Stop()";
+#ifndef NO_INTEL_PIE
   if (intel_wifi_valid_) {
     NEARBY_LOGS(INFO) << "Deregister Intel Callback, free Adapters Memory "
                          "List, free Muroc Api Dll handler.";
@@ -157,12 +174,17 @@ void WifiIntel::Stop() {
     FreeMemoryList(muroc_api_dll_handle_, p_all_adapters_);
     SAFEFREELIBRARY(muroc_api_dll_handle_);
   }
+#else
+  NEARBY_LOGS(INFO) << "NO_INTEL_PIE found, skip";
+#endif
 }
 
-uint8_t WifiIntel::GetGOChannel() {
-  WIFIPANQUERYPREFFEDCHANNELSETTING WifiPanQueryPreferredChannelSettingFunc =
+int WifiIntel::GetGOChannel() {
+#ifndef NO_INTEL_PIE
+  WIFIPANQUERYPREFERREDCHANNELSETTING WifiPanQueryPreferredChannelSettingFunc =
       nullptr;
-  uint8_t channel = 0;
+  int channel = -1;
+
   DWORD dwError = ERROR_SUCCESS;  // NOLINT
   MUROC_RET murocApiRetVal = IWLAN_E_FAILURE;  // NOLINT
   INTEL_WIFI_HEADER intelWifiHeader;
@@ -171,7 +193,7 @@ uint8_t WifiIntel::GetGOChannel() {
   if (!intel_wifi_valid_) return channel;
 
   WifiPanQueryPreferredChannelSettingFunc =
-      (WIFIPANQUERYPREFFEDCHANNELSETTING)GetProcAddress(  // NOLINT
+      (WIFIPANQUERYPREFERREDCHANNELSETTING)GetProcAddress(  // NOLINT
           muroc_api_dll_handle_,
           "WifiPanQueryPreferredChannelSetting");
 
@@ -185,6 +207,9 @@ uint8_t WifiIntel::GetGOChannel() {
   NEARBY_LOGS(VERBOSE)
       << "Load WifiPanQueryPreferredChannelSetting API completed successfully";
 
+  intelWifiHeader.dwSize =
+      sizeof(MurocDefs::INTEL_GO_OPERATION_CHANNEL_SETTING);
+  memset(&intelGOChan, 0, sizeof(intelGOChan));
   murocApiRetVal = WifiPanQueryPreferredChannelSettingFunc(
       wifi_adapter_handle_, &intelWifiHeader, (void*)&intelGOChan);
 
@@ -194,7 +219,7 @@ uint8_t WifiIntel::GetGOChannel() {
     if (intelGOChan.goState == MurocDefs::INTEL_GO_CURRENT_CHANNEL_ACTIVE) {
       channel = intelGOChan.channel;
     } else {
-      NEARBY_LOGS(INFO) << "No active GO found, return 0";
+      NEARBY_LOGS(INFO) << "No active GO found, return -1";
     }
   } else {
     NEARBY_LOGS(INFO) << "Calling WifiPanQueryPreferredChannelSetting API "
@@ -203,8 +228,108 @@ uint8_t WifiIntel::GetGOChannel() {
   }
 
   return channel;
+#else
+  NEARBY_LOGS(INFO) << "NO_INTEL_PIE found, return -1";
+  return -1;
+#endif
 }
 
+bool WifiIntel::SetScanFilter(int channel) {
+#ifndef NO_INTEL_PIE
+  WIFILEGACYGOSETSCANFILTER WifiLegacyGoSetScanFilterFunc =
+      nullptr;
+  DWORD dwError = ERROR_SUCCESS;  // NOLINT
+  MUROC_RET murocApiRetVal = IWLAN_E_FAILURE;  // NOLINT
+  INTEL_WIFI_HEADER intelWifiHeader;
+  MurocDefs::WIFI_LEGACY_GO_SCAN_FILTER scanFilter;
+
+  if (channel <= 0) return false;
+  if (!intel_wifi_valid_) return false;
+
+  NEARBY_LOGS(INFO) << "Set scan channel:" << channel;
+  WifiLegacyGoSetScanFilterFunc =
+      (WIFILEGACYGOSETSCANFILTER)GetProcAddress(  // NOLINT
+          muroc_api_dll_handle_,
+          "WifiLegacyGoSetScanFilter");
+
+  if (WifiLegacyGoSetScanFilterFunc == nullptr) {
+    dwError = GetLastError();  // NOLINT
+    NEARBY_LOGS(INFO)
+        << "GetProcAddress WifiLegacyGoSetScanFilterFunc error: "
+        << dwError;
+    return false;
+  }
+  NEARBY_LOGS(VERBOSE)
+      << "Load WifiLegacyGoSetScanFilterFunc API completed successfully";
+
+  intelWifiHeader.dwSize =
+      sizeof(MurocDefs::WIFI_LEGACY_GO_SCAN_FILTER);
+  memset(&scanFilter, 0, sizeof(scanFilter));
+  scanFilter.channel = (UINT8)channel;
+  murocApiRetVal = WifiLegacyGoSetScanFilterFunc(
+      wifi_adapter_handle_, &intelWifiHeader, (void*)&scanFilter);
+
+  if (murocApiRetVal == IWLAN_E_SUCCESS) {  // NOLINT
+    NEARBY_LOGS(INFO) << "Calling WifiLegacyGoSetScanFilter API "
+                         "succeeded, set scan channel to "
+                      << channel;
+    return true;
+  }
+  NEARBY_LOGS(INFO) << "Calling WifiLegacyGoSetScanFilter API "
+                       "failed with error: "
+                    << murocApiRetVal;
+
+  return false;
+#else
+  NEARBY_LOGS(INFO) << "NO_INTEL_PIE found, return -1";
+  return false;
+#endif
+}
+
+bool WifiIntel::ResetScanFilter() {
+#ifndef NO_INTEL_PIE
+  WIFIPANRESETLEGACYGOSCANFILTER WifiPanReSetLegacyGoScanFilterFunc =
+      nullptr;
+  DWORD dwError = ERROR_SUCCESS;  // NOLINT
+  MUROC_RET murocApiRetVal = IWLAN_E_FAILURE;  // NOLINT
+  INTEL_WIFI_HEADER intelWifiHeader;
+
+  if (!intel_wifi_valid_) return false;
+
+  WifiPanReSetLegacyGoScanFilterFunc =
+      (WIFIPANRESETLEGACYGOSCANFILTER)GetProcAddress(  // NOLINT
+          muroc_api_dll_handle_,
+          "WifiPanReSetLegacyGoScanFilter");
+
+  if (WifiPanReSetLegacyGoScanFilterFunc == nullptr) {
+    dwError = GetLastError();  // NOLINT
+    NEARBY_LOGS(INFO)
+        << "GetProcAddress WifiPanReSetLegacyGoScanFilterFunc error: "
+        << dwError;
+    return false;
+  }
+  NEARBY_LOGS(VERBOSE)
+      << "Load WifiPanReSetLegacyGoScanFilterFunc API completed successfully";
+  intelWifiHeader.dwSize = 0;
+  murocApiRetVal = WifiPanReSetLegacyGoScanFilterFunc(
+      wifi_adapter_handle_, &intelWifiHeader);
+
+  if (murocApiRetVal == IWLAN_E_SUCCESS) {  // NOLINT
+    NEARBY_LOGS(INFO) << "Calling WifiPanReSetLegacyGoScanFilter API succeeded";
+    return true;
+  }
+  NEARBY_LOGS(INFO) << "Calling WifiPanQueryPreferredChannelSetting API "
+                       "failed with error: "
+                    << murocApiRetVal;
+
+  return false;
+#else
+  NEARBY_LOGS(INFO) << "NO_INTEL_PIE found, return -1";
+  return false;
+#endif
+}
+
+#ifndef NO_INTEL_PIE
 wchar_t* GetEntireRegistryDeviceList() {
   CONFIGRET configRet = CR_SUCCESS;
   wchar_t* pDeviceList = nullptr;
@@ -426,7 +551,7 @@ HINSTANCE WifiIntel::PIEDllLoader() {
     // load the library and get the handle
     murocApiDllHandle = LoadLibraryW(pDllPathValue);  // NOLINT
 
-    NEARBY_LOGS(INFO) << absl::StrFormat("Muroc Api Dll Handle is 0x%p ",
+    NEARBY_LOGS(VERBOSE) << absl::StrFormat("Muroc Api Dll Handle is 0x%p ",
                                          murocApiDllHandle);
   } else {
     NEARBY_LOGS(INFO) << "GetFullDllLoadPathFromPieRegistry fails eith error: "
@@ -456,7 +581,7 @@ HADAPTER WifiGetAdapterList(HINSTANCE murocApiDllHandle,
     return INVALID_HADAPTER;
   }
 
-  NEARBY_LOGS(INFO) << "GetProcAddress for WifiGetAdapterListFunction API "
+  NEARBY_LOGS(VERBOSE) << "GetProcAddress for WifiGetAdapterListFunction API "
                        "completed successfully";
   INTEL_WIFI_HEADER intelHeader = {INTEL_STRUCT_VERSION_V156,  // NOLINT
                                    sizeof(MurocDefs::INTEL_ADAPTER_LIST_V120)};
@@ -473,7 +598,7 @@ HADAPTER WifiGetAdapterList(HINSTANCE murocApiDllHandle,
   }
 
   firstAdapterOnTheList = (*ppAllAdapters)->adapter[0].hAdapter;
-  NEARBY_LOGS(INFO) << "Return WIFI Adapter: " << firstAdapterOnTheList;
+  NEARBY_LOGS(INFO) << "WIFI Adapter on the list: " << firstAdapterOnTheList;
 
   return firstAdapterOnTheList;
 }
@@ -530,7 +655,7 @@ void DeregisterIntelCallback(HINSTANCE murocApiDllHandle,
     murocApiRetVal = deregisterIntelCBFunc(fnCallback);
 
     if (murocApiRetVal == IWLAN_E_SUCCESS) {
-      NEARBY_LOGS(INFO) << "Calling DeregisterIntelCallback API succeeded.";
+      NEARBY_LOGS(VERBOSE) << "Calling DeregisterIntelCallback API succeeded.";
     } else {
       NEARBY_LOGS(INFO)
           << "Calling DeregisterIntelCallback API fails with error:"
@@ -564,13 +689,13 @@ void FreeMemoryList(HINSTANCE murocApiDllHandle, void* ptr) {
     murocApiRetVal = freeMemoryListFunction(ptr);
 
     if (murocApiRetVal == IWLAN_E_SUCCESS) {
-      NEARBY_LOGS(INFO) << "Calling FreeListMemory API succeeded.";
+      NEARBY_LOGS(VERBOSE) << "Calling FreeListMemory API succeeded.";
     } else {
       NEARBY_LOGS(INFO) << "Calling FreeListMemory API failed with error: "
                         << murocApiRetVal;
     }
   }
 }
-
+#endif
 }  // namespace windows
 }  // namespace nearby
