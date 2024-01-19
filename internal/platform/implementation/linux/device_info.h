@@ -36,7 +36,7 @@ namespace linux {
 
 class CurrentUserSession final
     : public sdbus::ProxyInterfaces<org::freedesktop::login1::Session_proxy> {
- public:
+public:
   CurrentUserSession(const CurrentUserSession &) = delete;
   CurrentUserSession(CurrentUserSession &&) = delete;
   CurrentUserSession &operator=(const CurrentUserSession &) = delete;
@@ -55,7 +55,7 @@ class CurrentUserSession final
   void UnregisterScreenLockedListener(absl::string_view listener_name)
       ABSL_LOCKS_EXCLUDED(screen_lock_listeners_mutex_);
 
- protected:
+protected:
   void onPauseDevice(const uint32_t &major, const uint32_t &minor,
                      const std::string &type) override {}
   void onResumeDevice(const uint32_t &major, const uint32_t &minor,
@@ -64,7 +64,7 @@ class CurrentUserSession final
   void onLock() override ABSL_LOCKS_EXCLUDED(screen_lock_listeners_mutex_);
   void onUnlock() override ABSL_LOCKS_EXCLUDED(screen_lock_listeners_mutex_);
 
- private:
+private:
   absl::Mutex screen_lock_listeners_mutex_;
   absl::flat_hash_map<std::string,
                       std::function<void(api::DeviceInfo::ScreenStatus)>>
@@ -73,7 +73,7 @@ class CurrentUserSession final
 
 class Hostnamed
     : public sdbus::ProxyInterfaces<org::freedesktop::hostname1_proxy> {
- public:
+public:
   Hostnamed(const Hostnamed &) = delete;
   Hostnamed(Hostnamed &&) = delete;
   Hostnamed &operator=(const Hostnamed &) = delete;
@@ -88,7 +88,7 @@ class Hostnamed
 
 class LoginManager final
     : public sdbus::ProxyInterfaces<org::freedesktop::login1::Manager_proxy> {
- public:
+public:
   LoginManager(const LoginManager &) = delete;
   LoginManager(LoginManager &&) = delete;
   LoginManager &operator=(const LoginManager &) = delete;
@@ -100,7 +100,7 @@ class LoginManager final
   }
   ~LoginManager() { unregisterProxy(); }
 
- protected:
+protected:
   void onSessionNew(const std::string &session_id,
                     const sdbus::ObjectPath &object_path) override {}
   void onSessionRemoved(const std::string &session_id,
@@ -118,19 +118,19 @@ class LoginManager final
 };
 
 class DeviceInfo final : public api::DeviceInfo {
- public:
+public:
   explicit DeviceInfo(std::shared_ptr<sdbus::IConnection> system_bus);
 
   std::optional<std::u16string> GetOsDeviceName() const override;
   api::DeviceInfo::DeviceType GetDeviceType() const override;
   api::DeviceInfo::OsType GetOsType() const override {
-    return api::DeviceInfo::OsType::kWindows;  // Or ChromeOS?
+    return api::DeviceInfo::OsType::kWindows; // Or ChromeOS?
   }
-  std::optional<std::u16string> GetFullName() const override;
-  std::optional<std::u16string> GetGivenName() const override {
+  std::optional<std::string> GetFullName() const override;
+  std::optional<std::string> GetGivenName() const override {
     return GetFullName();
   }
-  std::optional<std::u16string> GetLastName() const override {
+  std::optional<std::string> GetLastName() const override {
     return GetFullName();
   }
   std::optional<std::string> GetProfileUserName() const override;
@@ -151,21 +151,21 @@ class DeviceInfo final : public api::DeviceInfo {
     current_user_session_->RegisterScreenLockedListener(listener_name,
                                                         std::move(callback));
   }
-  void UnregisterScreenLockedListener(
-      absl::string_view listener_name) override {
+  void
+  UnregisterScreenLockedListener(absl::string_view listener_name) override {
     current_user_session_->UnregisterScreenLockedListener(listener_name);
   }
 
   bool PreventSleep() override;
   bool AllowSleep() override;
 
- private:
+private:
   std::shared_ptr<sdbus::IConnection> system_bus_;
   std::unique_ptr<CurrentUserSession> current_user_session_;
   std::unique_ptr<LoginManager> login_manager_;
   std::optional<sdbus::UnixFd> inhibit_fd_;
 };
-}  // namespace linux
-}  // namespace nearby
+} // namespace linux
+} // namespace nearby
 
-#endif  // PLATFORM_IMPL_LINUX_DEVICE_INFO_H_
+#endif // PLATFORM_IMPL_LINUX_DEVICE_INFO_H_
