@@ -69,6 +69,7 @@ cc_library(
         "bluetooth_devices.h",
         "bluetooth_pairing.h",
         "bluez.h",
+        "bluez_device.h",
         "bluez_advertisement_monitor.h",
         "bluez_advertisement_monitor_manager.h",
         "bluez_gatt_characteristic_client.h",
