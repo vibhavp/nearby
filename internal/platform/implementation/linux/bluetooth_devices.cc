@@ -17,7 +17,7 @@
 #include <functional>
 #include <optional>
 
-#include <absl/time/clock.h>
+#include "absl/time/clock.h"
 #include <sdbus-c++/Types.h>
 
 #include "absl/strings/substitute.h"
@@ -44,8 +44,8 @@ std::shared_ptr<BluetoothDevice> BluetoothDevices::get_device_by_path(
   return devices_by_path_[device_object_path];
 }
 
-std::shared_ptr<BluetoothDevice> BluetoothDevices::get_device_by_address(
-    const std::string &addr) {
+std::shared_ptr<BluetoothDevice>
+BluetoothDevices::get_device_by_address(const std::string &addr) {
   auto device_object_path =
       bluez::device_object_path(adapter_object_path_, addr);
   return get_device_by_path(device_object_path);
@@ -80,12 +80,13 @@ void BluetoothDevices::cleanup_lost_peripherals() {
   for (auto it = devices_by_path_.begin(), end = devices_by_path_.end();
        it != end;) {
     auto copy = it++;
-    if (copy->second->Lost()) devices_by_path_.erase(copy);
+    if (copy->second->Lost())
+      devices_by_path_.erase(copy);
   }
 }
 
-std::shared_ptr<MonitoredBluetoothDevice> BluetoothDevices::add_new_device(
-    sdbus::ObjectPath device_object_path) {
+std::shared_ptr<MonitoredBluetoothDevice>
+BluetoothDevices::add_new_device(sdbus::ObjectPath device_object_path) {
   absl::MutexLock l(&devices_by_path_lock_);
   auto [device_it, inserted] = devices_by_path_.emplace(
       std::string(device_object_path),
@@ -93,7 +94,8 @@ std::shared_ptr<MonitoredBluetoothDevice> BluetoothDevices::add_new_device(
           system_bus_,
           std::make_shared<bluez::Device>(system_bus_, device_object_path),
           observers_));
-  if (!inserted) device_it->second->UnmarkLost();
+  if (!inserted)
+    device_it->second->UnmarkLost();
   return device_it->second;
 }
 
@@ -106,7 +108,8 @@ void DeviceWatcher::onInterfacesAdded(
     return;
   }
 
-  if (interfaces.count(org::bluez::Device1_proxy::INTERFACE_NAME) == 0) return;
+  if (interfaces.count(org::bluez::Device1_proxy::INTERFACE_NAME) == 0)
+    return;
 
   auto device = devices_->add_new_device(object);
   device->SetDiscoveryCallback(discovery_cb_);
@@ -188,5 +191,5 @@ void DeviceWatcher::notifyExistingDevices() {
   }
 }
 
-}  // namespace linux
-}  // namespace nearby
+} // namespace linux
+} // namespace nearby
